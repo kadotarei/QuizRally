@@ -1,0 +1,25 @@
+#   
+# Unity auto generated  
+/[Ll]ibrary/  
+/[Tt]emp/  
+/[Oo]bj/  
+/[Bb]uild/  
+/[Bb]uilds/  
+/[Ll]ogs/  
+/[Uu]ser[Ss]ettings/  
+/[M13d]emocracy/  
+  
+# Visual Studio / VS Code / Rider  
+/.vs/  
+/.idea/  
+/*.csproj  
+/*.unityproj  
+/*.sln  
+/*.user  
+/*.userprefs  
+/*.pidb  
+/*.booproj  
+  
+# OS generated  
+.DS_Store  
+Thumbs.db  
