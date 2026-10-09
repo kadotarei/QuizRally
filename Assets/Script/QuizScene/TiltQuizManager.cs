@@ -22,7 +22,7 @@ public class TiltQuizManager : MonoBehaviour
         RuleScreen,         // 1. ルール画像表示中
         TutorialQuestion,   // 2. チュートリアル問題中
         TutorialReady,      // 3. 本番前の準備説明中
-        PreviewQuestion,    // 4. 問題文・選択肢の事前表示（3秒間）
+        PreviewQuestion,    // 4. 問題文・選択肢の事前表示（タップでマップへ移行）
         Navigation,         // 5. 周回案内画面（館内地図＋〇〇へ行ってみよう！）
         MainQuiz            // 6. 本番クイズ（回答中）
     }
@@ -33,6 +33,7 @@ public class TiltQuizManager : MonoBehaviour
     {
         [TextArea(2, 4)]
         public string navigationText; // 周回案内文章
+        public Sprite mapSprite;      // --- 追加: 各問題に対応するマップ画像 ---
         [TextArea(2, 4)]
         public string questionText;
         public string optionLeft;
@@ -41,6 +42,7 @@ public class TiltQuizManager : MonoBehaviour
         public Sprite optionRightImage; // 右選択肢の画像
         public bool isLeftCorrect;
     }
+
 
     [Header("Language Settings")]
     public Language currentLanguage = Language.Japanese;
@@ -64,14 +66,22 @@ public class TiltQuizManager : MonoBehaviour
     public TextMeshProUGUI resultText;
     public GameObject subText;
 
+    [Header("Show Map Button Reference (マップ表示ボタン)")]
+    public GameObject showMapButton;               // 問題文・選択肢と同時に出すボタン
+    public UIPopAnimation showMapButtonPopAnim;
+
     [Header("Option Image Reference (選択肢用画像)")]
     public Image optionLeftUI;
     public Image optionRightUI;
+    public GameObject optionLeftFrameUI;  // 追加：左イラストの枠画像
+    public GameObject optionRightFrameUI; // 追加：右イラストの枠画像
 
     [Header("Button Text References")]
     public TextMeshProUGUI retryButtonText;
     public TextMeshProUGUI titleButtonText;
     public TextMeshProUGUI useCouponButtonText;
+    public TextMeshProUGUI showMapButtonText;
+    public TextMeshProUGUI arrivedButtonText;
 
     [Header("UI Container Reference")]
     public GameObject questionPanel;
@@ -80,13 +90,13 @@ public class TiltQuizManager : MonoBehaviour
     public GameObject resultPanel;
 
     [Header("Score & Ranking UI Reference")]
-    public GameObject scoreFrameImage;        // 💡 スコア枠（画像オブジェクト）
-    public TextMeshProUGUI scoreText;          // 💡 スコア詳細表示テキスト
-    public UIPopAnimation scoreFramePopAnim;   // 💡 スコア枠アニメーション
+    public GameObject scoreFrameImage;        // スコア枠（画像オブジェクト）
+    public TextMeshProUGUI scoreText;          // スコア詳細表示テキスト
+    public UIPopAnimation scoreFramePopAnim;   // スコア枠アニメーション
 
-    public GameObject rankingFrameImage;      // 💡 ランキング枠（画像オブジェクト）
-    public TextMeshProUGUI rankingText;        // 💡 ランキング表示テキスト
-    public UIPopAnimation rankingFramePopAnim; // 💡 ランキング枠アニメーション
+    public GameObject rankingFrameImage;      // ランキング枠（画像オブジェクト）
+    public TextMeshProUGUI rankingText;        // ランキング表示テキスト
+    public UIPopAnimation rankingFramePopAnim; // ランキング枠アニメーション
 
     [Header("End Game Buttons")]
     public GameObject retryButton;
@@ -110,16 +120,24 @@ public class TiltQuizManager : MonoBehaviour
 
     [Header("Status UI Reference")]
     public TextMeshProUGUI progressStatusText; // 「第 1 / 5 問」等を表示するUI
+    public GameObject questionNumberFrameImage; // 「第◯問 / 全◯問」テキストの枠画像オブジェクト
 
     [Header("Timer Settings")]
     public Slider timerSlider;
+    public Image timerFillImage;            // --- 追加: スライダーの Fill 画像 (Fill Area/Fill) ---
+    public RectTransform timerHandleRect;   // --- 追加: トロッコ Handle の RectTransform ---
     public float timeLimit = 15f;
-    public float questionPreviewDuration = 3f; // 事前表示の秒数（3秒）
     private float currentTimer = 0f;
     private bool isTimerRunning = false;
 
-    private float totalTimeSpent = 0f;       // 💡 回答にかかった合計時間（秒）
-    private int finalScore = 0;              // 💡 最終算出スコア
+    // --- 追加: トロッコ ガタゴト振動のパラメータ ---
+    public float rumbleFrequency = 25f;     // 揺れる速度
+    public float rumbleAmountY = 3.0f;      // 上下の揺れ幅(ピクセル)
+    public float rumbleAmountRotation = 4f; // 傾きの揺れ幅(度)
+    private Vector2 handleOriginalAnchoredPos; // ← これを追加（波線が消えます）
+
+    private float totalTimeSpent = 0f;       // 回答にかかった合計時間（秒）
+    private int finalScore = 0;              // 最終算出スコア
 
     [Header("UI Image Settings (〇×表示用)")]
     public Image markImage;
@@ -192,6 +210,11 @@ public class TiltQuizManager : MonoBehaviour
     public UIPopAnimation navigationTextPopAnim;
     public UIPopAnimation arrivedButtonPopAnim;
     public UIPopAnimation markPopAnim;
+    private Coroutine mapButtonPulseCoroutine; // 追加：マップボタンのアピール演出コルーチン
+    public UIPopAnimation optionLeftFramePopAnim;        // --- 追加: 左イラスト枠用ポップアニメーション ---
+    public UIPopAnimation optionRightFramePopAnim;       // --- 追加: 右イラスト枠用ポップアニメーション ---
+    public UIPopAnimation questionNumberFramePopAnim;    // --- 追加: 「第◯問 / 全◯問」枠用ポップアニメーション ---
+
 
     private bool hasAnswered = false;
     private bool waitingForNeutral = false;
@@ -215,6 +238,11 @@ public class TiltQuizManager : MonoBehaviour
             Input.gyro.enabled = true;
         }
 
+        if (timerHandleRect != null)
+        {
+            handleOriginalAnchoredPos = timerHandleRect.anchoredPosition;
+        }
+
         mainCamera = Camera.main;
         if (mainCamera == null) mainCamera = FindAnyObjectByType<Camera>();
         if (mainCamera != null) mainCamera.backgroundColor = defaultColor;
@@ -224,6 +252,7 @@ public class TiltQuizManager : MonoBehaviour
         if (titleButton != null) titleButton.SetActive(false);
         if (couponPanel != null) couponPanel.SetActive(false);
         if (navigationPanel != null) navigationPanel.SetActive(false);
+        if (showMapButton != null) showMapButton.SetActive(false);
 
         if (scoreFrameImage != null) scoreFrameImage.SetActive(false);
         if (scoreText != null) scoreText.gameObject.SetActive(false);
@@ -260,7 +289,78 @@ public class TiltQuizManager : MonoBehaviour
     {
         if (optionLeftUI != null) optionLeftUI.gameObject.SetActive(false);
         if (optionRightUI != null) optionRightUI.gameObject.SetActive(false);
+        if (optionLeftFrameUI != null) optionLeftFrameUI.SetActive(false);
+        if (optionRightFrameUI != null) optionRightFrameUI.SetActive(false);
     }
+
+
+
+    #region --- 環境判定ヘルパー ---
+
+    private bool IsMobilePlatform()
+    {
+        // 1. エディタ実行時はPCとしてテストできるようにする
+        if (Application.isEditor)
+        {
+            return false;
+        }
+
+        // 2. 明確なPC系OS（Windows / Mac OS X / Linux）かつタッチ操作非対応の場合はPC（キーボード操作）判定
+        bool isDesktopOS = SystemInfo.operatingSystem.Contains("Windows") ||
+                           SystemInfo.operatingSystem.Contains("Mac") ||
+                           SystemInfo.operatingSystem.Contains("Linux");
+
+        // Input.touchSupported を使用してタッチ操作に対応しているか判定
+        if (isDesktopOS && Input.touchSupported == false)
+        {
+            return false; // PC環境
+        }
+
+        // 3. それ以外（Android / iOS / スマホブラウザ / 判断がつかない場合）はデフォルトでスマホ判定
+        return true;
+    }
+
+    private string GetOperationGuideText()
+    {
+        if (IsMobilePlatform())
+        {
+            return GetText("スマホを傾けて選んでね！", "Tilt your phone to choose!");
+        }
+        else
+        {
+            return GetText("左右キー（← / →）で選んでね！", "Use Left/Right arrow keys to choose!");
+        }
+    }
+
+    // --- 「次へ進む」専用の案内文言 ---
+    private string GetAdvanceGuideText()
+    {
+        if (IsMobilePlatform())
+        {
+            return GetText("スマホを傾けて次へ進んでね！", "Tilt your phone to continue!");
+        }
+        else
+        {
+            return GetText("左右キー（← / →）で次へ進んでね！", "Use Left/Right arrow keys to continue!");
+        }
+    }
+
+    // --- 追加: 「スタート」専用の案内文言 ---
+    private string GetStartGuideText()
+    {
+        if (IsMobilePlatform())
+        {
+            return GetText("スマホを傾けてスタート！", "Tilt your phone to START!");
+        }
+        else
+        {
+            return GetText("左右キー（← / →）を押してスタート！", "Use Left/Right arrow keys to START!");
+        }
+    }
+
+    #endregion
+
+
 
     #region --- 言語切り替え・テキスト取得 ---
 
@@ -292,8 +392,20 @@ public class TiltQuizManager : MonoBehaviour
         if (titleButtonText != null)
             titleButtonText.text = GetText("タイトルへ", "Title Screen");
 
+        // --- 修正: クーポンの使用状態に合わせてテキストを更新 ---
         if (useCouponButtonText != null)
-            useCouponButtonText.text = GetText("クーポンを使用する", "Use Coupon");
+        {
+            bool isUsed = PlayerPrefs.GetInt(CouponUsedKey, 0) == 1;
+            useCouponButtonText.text = isUsed ? 
+                GetText("クーポン使用済み", "Coupon Used") : 
+                GetText("クーポンを使用する", "Use Coupon");
+        }
+
+        if (showMapButtonText != null)
+            showMapButtonText.text = GetText("マップを確認してみよう！", "Let's Check the Map!");
+
+        if (arrivedButtonText != null)
+            arrivedButtonText.text = GetText("到着した！", "I've Arrived!");
 
         UpdateStatusUI();
     }
@@ -427,8 +539,10 @@ public class TiltQuizManager : MonoBehaviour
                 }
                 break;
 
+            case GameState.PreviewQuestion:
+                break;
+
             case GameState.Navigation:
-                // 💡 「到着した！」ボタンは傾き操作を除外したため、キー/傾きによる自動遷移は行いません。
                 break;
 
             case GameState.MainQuiz:
@@ -471,13 +585,15 @@ public class TiltQuizManager : MonoBehaviour
         SetQuizUIActive(false);
         if (resultPanel != null) resultPanel.SetActive(true);
         
+        // --- 修正: GetOperationGuideText() から GetAdvanceGuideText() に変更 ---
         SetResultText(GetText(
-            "【 ルール説明 】\n確認したら、スマホを左右どちらかに傾けてね！",
-            "【 HOW TO PLAY 】\nTilt your phone left or right when ready!"
+            $"【 ルール説明 】\n確認したら、{GetAdvanceGuideText()}",
+            $"【 HOW TO PLAY 】\nWhen ready, {GetAdvanceGuideText()}"
         ));
 
         StartTransitionCoolDown(0.8f);
     }
+
 
     void StartTutorialQuestion()
     {
@@ -491,13 +607,18 @@ public class TiltQuizManager : MonoBehaviour
         if (questionText != null) 
             questionText.text = GetText("練習問題：半田赤レンガは100年以上の歴史を持つ？", "Practice: Does Red Brick Building have over 100 years of history?");
 
-        if (optionLeftText != null) optionLeftText.text = GetText("← ○（そう！）", "← YES");
-        if (optionRightText != null) optionRightText.text = GetText("×（ちがう） →", "NO →");
+        // --- 修正: 左右の矢印を削除 ---
+        if (optionLeftText != null) optionLeftText.text = GetText("○（そう！）", "YES");
+        if (optionRightText != null) optionRightText.text = GetText("×（ちがう）", "NO");
 
         PlayQuestionPop();
         PlayOptionsPop();
 
-        SetResultText(GetText("スマホを「左」にしっかり傾けて「○」を選んでみよう！", "Tilt your phone to the LEFT to select 'YES'!"));
+        string tutorialGuide = IsMobilePlatform() ?
+            GetText("スマホを傾けて正解を選んでね！", " Tilt your phone to choose the correct answer!") :
+            GetText("キーボードの左右キーを押して正解を選んでね！", "Use the left and right arrow keys on your keyboard to select the correct answer!");
+
+        SetResultText(tutorialGuide);
 
         hasAnswered = false;
         waitingForNeutral = true;
@@ -549,17 +670,22 @@ public class TiltQuizManager : MonoBehaviour
             PlaySE(incorrectSE);
             ShowMark(incorrectSprite);
             if (mainCamera != null) mainCamera.backgroundColor = incorrectColor;
-            SetResultText(GetText("おっと！左に傾けて「○」を選んでね！", "Oops! Tilt LEFT to select 'YES'!"));
+            SetResultText(GetText("おっと！「左」を選んでね！", "Oops! Select 'LEFT'!"));
             Invoke(nameof(ResetTutorialState), 1.5f);
         }
     }
 
-    void ResetTutorialState()
+
+void ResetTutorialState()
     {
         if (mainCamera != null) mainCamera.backgroundColor = defaultColor;
         if (markImage != null) markImage.gameObject.SetActive(false);
         
-        SetResultText(GetText("スマホを「左」に傾けて「○」を選んでみよう！", "Tilt your phone to the LEFT to select 'YES'!"));
+        string tutorialGuide = IsMobilePlatform() ?
+            GetText("スマホを傾けて正解を選んでね！", " Tilt your phone to choose the correct answer!") :
+            GetText("キーボードの左右キーを押して正解を選んでね！", "Use the left and right arrow keys on your keyboard to select the correct answer!");
+
+        SetResultText(tutorialGuide);
 
         hasAnswered = false;
         waitingForNeutral = true;
@@ -594,13 +720,14 @@ public class TiltQuizManager : MonoBehaviour
     void ShowFinalInstructionText()
     {
         SetResultText(GetText(
-            "全5問に挑戦しよう！準備ができたら\n【 スマホを左右どちらかに傾けて 】スタート！",
-            "Try all 5 questions!\nTilt your phone left or right to START!"
+            $"全5問に挑戦しよう！準備ができたら\n{GetStartGuideText()}",
+            $"Try all 5 questions!\nWhen ready, {GetStartGuideText()}"
         ));
 
         isReadyToStart = true; 
         StartTransitionCoolDown(0.5f);
     }
+
 
     void StartMainQuiz()
     {
@@ -627,63 +754,172 @@ public class TiltQuizManager : MonoBehaviour
             return;
         }
 
-        StartCoroutine(QuestionPreviewRoutine());
+        ShowQuestionPreview();
     }
 
-    private IEnumerator QuestionPreviewRoutine()
+        private void ShowQuestionPreview()
     {
         currentState = GameState.PreviewQuestion;
-        SetQuizUIActive(false);
+        SetQuizUIActive(false); 
         if (navigationPanel != null) navigationPanel.SetActive(false);
         if (mainCamera != null) mainCamera.backgroundColor = defaultColor;
         if (markImage != null) markImage.gameObject.SetActive(false);
 
-        // 💡 事前表示：問題文と2つの選択肢を表示
         if (questionPanel != null) questionPanel.SetActive(true);
         if (optionLeftPanel != null) optionLeftPanel.SetActive(true);
         if (optionRightPanel != null) optionRightPanel.SetActive(true);
         if (progressStatusText != null) progressStatusText.gameObject.SetActive(true);
+        
+        // --- 修正: 第◯問枠の表示とアニメーション再生 ---
+        if (questionNumberFrameImage != null) 
+        {
+            questionNumberFrameImage.SetActive(true);
+            if (questionNumberFramePopAnim != null) questionNumberFramePopAnim.PlayPop();
+        }
+
         UpdateStatusUI();
 
         Question[] sourceQuestions = (currentLanguage == Language.Japanese) ? questionsJapanese : questionsEnglish;
         Question q = sourceQuestions[currentQuestionIndex];
         
         if (questionText != null) questionText.text = $"Q{currentQuestionIndex + 1}. {q.questionText}";
-        if (optionLeftText != null) optionLeftText.text = "← " + q.optionLeft;
-        if (optionRightText != null) optionRightText.text = q.optionRight + " →";
+        
+        if (optionLeftText != null) optionLeftText.text = q.optionLeft;
+        if (optionRightText != null) optionRightText.text = q.optionRight;
 
+        // --- 修正: 左イラスト & 枠の表示とアニメーション再生 ---
         if (optionLeftUI != null)
         {
-            if (q.optionLeftImage != null)
+            bool hasImg = q.optionLeftImage != null;
+            optionLeftUI.sprite = q.optionLeftImage;
+            optionLeftUI.gameObject.SetActive(hasImg);
+            
+            if (optionLeftFrameUI != null) 
             {
-                optionLeftUI.sprite = q.optionLeftImage;
-                optionLeftUI.gameObject.SetActive(true);
+                optionLeftFrameUI.SetActive(hasImg);
+                if (hasImg && optionLeftFramePopAnim != null) optionLeftFramePopAnim.PlayPop();
             }
-            else optionLeftUI.gameObject.SetActive(false);
+            if (hasImg && optionLeftImagePopAnim != null) optionLeftImagePopAnim.PlayPop();
         }
 
+        // --- 修正: 右イラスト & 枠の表示とアニメーション再生 ---
         if (optionRightUI != null)
         {
-            if (q.optionRightImage != null)
+            bool hasImg = q.optionRightImage != null;
+            optionRightUI.sprite = q.optionRightImage;
+            optionRightUI.gameObject.SetActive(hasImg);
+            
+            if (optionRightFrameUI != null) 
             {
-                optionRightUI.sprite = q.optionRightImage;
-                optionRightUI.gameObject.SetActive(true);
+                optionRightFrameUI.SetActive(hasImg);
+                if (hasImg && optionRightFramePopAnim != null) optionRightFramePopAnim.PlayPop();
             }
-            else optionRightUI.gameObject.SetActive(false);
+            if (hasImg && optionRightImagePopAnim != null) optionRightImagePopAnim.PlayPop();
         }
 
         PlayQuestionPop();
         PlayOptionsPop();
 
-        // 💡 3秒間待機
-        yield return new WaitForSeconds(questionPreviewDuration);
+        if (showMapButton != null)
+        {
+            showMapButton.SetActive(true);
+            if (showMapButtonPopAnim != null) showMapButtonPopAnim.PlayPop();
+            StartMapButtonPulseAnimation();
+        }
 
-        // 💡 問題・選択肢を非表示にしてからナビゲーション表示へ移行
+        ResetHoldState();
+        StartTransitionCoolDown(0.3f);
+    }
+
+
+    public void OnClickShowMapButton()
+    {
+        if (currentState != GameState.PreviewQuestion || isTransitionCoolingDown || isButtonTransitioning) return;
+
+        StartCoroutine(ShowMapButtonRoutine());
+    }
+
+    private IEnumerator ShowMapButtonRoutine()
+    {
+        isButtonTransitioning = true;
+
+        // アピール演出を停止
+        StopMapButtonPulseAnimation();
+
+        PlaySE(buttonSE);
+        if (showMapButtonPopAnim != null) showMapButtonPopAnim.PlayPop();
+
+        float waitTime = 0.25f;
+        if (buttonSE != null) waitTime = Mathf.Max(waitTime, buttonSE.length);
+        yield return new WaitForSeconds(waitTime);
+
+        if (showMapButton != null) showMapButton.SetActive(false);
         SetQuizUIActive(false);
         HideOptionImages();
 
         ShowNavigationScreen();
+        isButtonTransitioning = false;
     }
+       #region --- マップボタン アピール演出 ---
+
+    private void StartMapButtonPulseAnimation()
+    {
+        StopMapButtonPulseAnimation();
+        if (showMapButton != null)
+        {
+            mapButtonPulseCoroutine = StartCoroutine(PulseMapButtonRoutine());
+        }
+    }
+
+    private void StopMapButtonPulseAnimation()
+    {
+        if (mapButtonPulseCoroutine != null)
+        {
+            StopCoroutine(mapButtonPulseCoroutine);
+            mapButtonPulseCoroutine = null;
+        }
+
+        if (showMapButton != null)
+        {
+            showMapButton.transform.localScale = Vector3.one;
+            showMapButton.transform.localRotation = Quaternion.identity;
+        }
+    }
+
+    private IEnumerator PulseMapButtonRoutine()
+    {
+        Transform btnTransform = showMapButton.transform;
+        Vector3 baseScale = Vector3.one;
+
+        float pulseSpeed = 4.0f;   // ポヨンポヨンの速度
+        float scaleAmount = 0.08f; // 拡大率 (最大1.08倍)
+        float rotateAmount = 1.2f; // --- 修正: 傾く角度をかなり控えめに (3.5f -> 1.2f) ---
+
+        while (showMapButton != null && showMapButton.activeSelf)
+        {
+            float time = Time.time * pulseSpeed;
+            float sineValue = Mathf.Sin(time);
+
+            // 1. ポヨンポヨンと拡大縮小
+            float scaleOffset = sineValue * scaleAmount;
+            btnTransform.localScale = baseScale + new Vector3(scaleOffset, scaleOffset, 0f);
+
+            // 2. 控えめな左右の揺れ
+            float angle = Mathf.Sin(time * 0.8f) * rotateAmount;
+            btnTransform.localRotation = Quaternion.Euler(0f, 0f, angle);
+
+            yield return null;
+        }
+
+        // 非表示・終了時は元に戻す
+        if (btnTransform != null)
+        {
+            btnTransform.localScale = Vector3.one;
+            btnTransform.localRotation = Quaternion.identity;
+        }
+    }
+
+    #endregion
 
     void ShowNavigationScreen()
     {
@@ -692,16 +928,38 @@ public class TiltQuizManager : MonoBehaviour
         SetQuizUIActive(false);
         if (resultPanel != null) resultPanel.SetActive(false);
 
+        UpdateAllUITexts();
+
         if (navigationPanel != null) navigationPanel.SetActive(true);
 
         Question[] sourceQuestions = (currentLanguage == Language.Japanese) ? questionsJapanese : questionsEnglish;
         if (currentQuestionIndex < sourceQuestions.Length)
         {
             Question currentQ = sourceQuestions[currentQuestionIndex];
+            
+            // 周回案内テキストの更新
             if (navigationText != null)
             {
-                // 💡 改行を削除して1行/一続きに
-                navigationText.text = $"【第 {currentQuestionIndex + 1} 問目のスポット】 {currentQ.navigationText}";
+                string headerText = GetText(
+                    $"【第 {currentQuestionIndex + 1} 問目のスポット】",
+                    $"[Spot for Question {currentQuestionIndex + 1}]"
+                );
+                navigationText.text = $"{headerText}\n{currentQ.navigationText}";
+            }
+
+            // --- 追加: 各問題に対応したマップ画像をUIに切り替えて表示 ---
+            if (mapImage != null)
+            {
+                if (currentQ.mapSprite != null)
+                {
+                    mapImage.sprite = currentQ.mapSprite;
+                    mapImage.gameObject.SetActive(true);
+                }
+                else
+                {
+                    // 画像が登録されていない場合は非表示（またはデフォルト画像にする場合は適宜調整）
+                    mapImage.gameObject.SetActive(false);
+                }
             }
         }
 
@@ -753,8 +1011,17 @@ public class TiltQuizManager : MonoBehaviour
 
         if (timerSlider != null) timerSlider.gameObject.SetActive(active);
         if (progressStatusText != null) progressStatusText.gameObject.SetActive(active);
+        
+        if (questionNumberFrameImage != null) 
+        {
+            questionNumberFrameImage.SetActive(active);
+            if (active && questionNumberFramePopAnim != null) questionNumberFramePopAnim.PlayPop();
+        }
+        
         if (subText != null) subText.SetActive(active);
     }
+
+
 
     void StartTransitionCoolDown(float time)
     {
@@ -776,16 +1043,42 @@ public class TiltQuizManager : MonoBehaviour
         if (isTimerRunning && !hasAnswered && !waitingForNeutral)
         {
             currentTimer -= Time.deltaTime;
+            float progress = Mathf.Clamp01(currentTimer / timeLimit);
 
             if (timerSlider != null)
             {
-                timerSlider.value = Mathf.Clamp01(currentTimer / timeLimit);
+                timerSlider.value = progress;
+            }
+
+            // --- 追加: Fill の表示/非表示切り替え ---
+            if (timerFillImage != null)
+            {
+                timerFillImage.gameObject.SetActive(progress > 0f);
+            }
+
+            // --- 追加: トロッコのガタゴト振動アニメーション ---
+            if (timerHandleRect != null)
+            {
+                if (progress > 0f)
+                {
+                    float yOffset = Mathf.Sin(Time.time * rumbleFrequency) * rumbleAmountY;
+                    float rotOffset = Mathf.Sin(Time.time * rumbleFrequency * 0.7f) * rumbleAmountRotation;
+
+                    timerHandleRect.anchoredPosition = handleOriginalAnchoredPos + new Vector2(0f, yOffset);
+                    timerHandleRect.localRotation = Quaternion.Euler(0f, 0f, rotOffset);
+                }
+                else
+                {
+                    // タイマー終了時は元の姿勢に戻す
+                    timerHandleRect.anchoredPosition = handleOriginalAnchoredPos;
+                    timerHandleRect.localRotation = Quaternion.identity;
+                }
             }
 
             if (currentTimer <= 0f)
             {
                 isTimerRunning = false;
-                totalTimeSpent += timeLimit; // 制限時間いっぱいを使用
+                totalTimeSpent += timeLimit; 
                 SetResultText("<color=blue>Time Up!</color>");
                 Question[] sourceQuestions = (currentLanguage == Language.Japanese) ? questionsJapanese : questionsEnglish;
                 Question currentQ = sourceQuestions[currentQuestionIndex];
@@ -794,6 +1087,8 @@ public class TiltQuizManager : MonoBehaviour
             }
         }
 
+        // （以降の入力判定等は既存通り）
+
         float inputValue = GetInputValue();
 
         if (waitingForNeutral)
@@ -801,7 +1096,7 @@ public class TiltQuizManager : MonoBehaviour
             if (Mathf.Abs(inputValue) < resetThreshold)
             {
                 waitingForNeutral = false;
-                SetResultText(GetText("スマホを傾けるか、左右キーで答えよう！", "Tilt your phone or press Left/Right keys!"));
+                SetResultText(GetOperationGuideText());
                 currentTimer = timeLimit;
                 isTimerRunning = true;
             }
@@ -918,66 +1213,102 @@ public class TiltQuizManager : MonoBehaviour
         PlayQuestionPop();
 
         if (optionLeftPanel != null) optionLeftPanel.SetActive(true);
-        if (optionLeftText != null) optionLeftText.text = "← " + q.optionLeft;
         
+        // --- 修正: "← " を削除 ---
+        if (optionLeftText != null) optionLeftText.text = q.optionLeft;
+                // 左選択肢イラスト＆枠
+           // 左選択肢イラスト＆枠
         if (optionLeftUI != null)
         {
-            if (q.optionLeftImage != null)
+            bool hasImg = q.optionLeftImage != null;
+            optionLeftUI.sprite = q.optionLeftImage;
+            optionLeftUI.gameObject.SetActive(hasImg);
+            
+            if (optionLeftFrameUI != null)
             {
-                optionLeftUI.sprite = q.optionLeftImage;
-                optionLeftUI.gameObject.SetActive(true);
-                if (optionLeftImagePopAnim != null) optionLeftImagePopAnim.PlayPop();
+                optionLeftFrameUI.SetActive(hasImg);
+                if (hasImg && optionLeftFramePopAnim != null) optionLeftFramePopAnim.PlayPop();
             }
-            else
+
+            if (hasImg && optionLeftImagePopAnim != null)
             {
-                optionLeftUI.gameObject.SetActive(false);
+                optionLeftImagePopAnim.PlayPop();
             }
         }
 
         if (optionRightPanel != null) optionRightPanel.SetActive(true);
-        if (optionRightText != null) optionRightText.text = q.optionRight + " →";
+        if (optionRightText != null) optionRightText.text = q.optionRight;
         
+        // 右選択肢イラスト＆枠
         if (optionRightUI != null)
         {
-            if (q.optionRightImage != null)
+            bool hasImg = q.optionRightImage != null;
+            optionRightUI.sprite = q.optionRightImage;
+            optionRightUI.gameObject.SetActive(hasImg);
+            
+            if (optionRightFrameUI != null)
             {
-                optionRightUI.sprite = q.optionRightImage;
-                optionRightUI.gameObject.SetActive(true);
-                if (optionRightImagePopAnim != null) optionRightImagePopAnim.PlayPop();
+                optionRightFrameUI.SetActive(hasImg);
+                if (hasImg && optionRightFramePopAnim != null) optionRightFramePopAnim.PlayPop();
             }
-            else
+
+            if (hasImg && optionRightImagePopAnim != null)
             {
-                optionRightUI.gameObject.SetActive(false);
+                optionRightImagePopAnim.PlayPop();
             }
         }
+
 
         PlayOptionsPop();
 
         if (!waitingForNeutral)
         {
-            SetResultText(GetText("スマホを傾けるか、左右キーで答えよう！", "Tilt your phone or press Left/Right keys!"));
+            SetResultText(GetOperationGuideText());
             currentTimer = timeLimit;
             isTimerRunning = true;
+
             if (timerSlider != null) timerSlider.value = 1f;
+
+            // --- 追加: タイマー開始時に Fill を表示し、Handle の姿態をリセット ---
+            if (timerFillImage != null) timerFillImage.gameObject.SetActive(true);
+            if (timerHandleRect != null)
+            {
+                timerHandleRect.anchoredPosition = handleOriginalAnchoredPos;
+                timerHandleRect.localRotation = Quaternion.identity;
+            }
         }
+
 
         hasAnswered = false;
         ResetHoldState();
     }
 
-    void Answer(bool choseLeft)
+       void Answer(bool choseLeft)
     {
         hasAnswered = true;
         isTimerRunning = false;
         ResetHoldState();
 
-        // 💡 かかった時間を加算
         float timeTaken = timeLimit - Mathf.Max(0f, currentTimer);
         totalTimeSpent += timeTaken;
 
         Question[] sourceQuestions = (currentLanguage == Language.Japanese) ? questionsJapanese : questionsEnglish;
         Question q = sourceQuestions[currentQuestionIndex];
         bool isCorrect = (choseLeft == q.isLeftCorrect);
+
+        // --- 修正: 判定表示中もイラスト本体と枠画像を両方表示維持する ---
+        if (optionLeftUI != null)
+        {
+            bool hasImg = q.optionLeftImage != null;
+            optionLeftUI.gameObject.SetActive(hasImg);
+            if (optionLeftFrameUI != null) optionLeftFrameUI.SetActive(hasImg);
+        }
+        if (optionRightUI != null)
+        {
+            bool hasImg = q.optionRightImage != null;
+            optionRightUI.gameObject.SetActive(hasImg);
+            if (optionRightFrameUI != null) optionRightFrameUI.SetActive(hasImg);
+        }
 
         ShowMark(isCorrect ? correctSprite : incorrectSprite);
 
@@ -1011,18 +1342,15 @@ public class TiltQuizManager : MonoBehaviour
         }
         else
         {
-            HideOptionImages();
+            // 次の問題へ移る直前のタイミングでイラストと枠を隠す
+            Invoke(nameof(HideOptionImages), 1.5f);
             Invoke(nameof(StartQuestionSequence), 1.5f);
         }
     }
 
     void CalculateFinalScore()
     {
-        // 💡 スコア計算式
-        // 基礎点：1問正解につき2,000点
         int baseScore = correctCount * 2000;
-        
-        // タイムボーナス：残った秒数（合計） × 100点
         float totalRemainingTime = Mathf.Max(0f, (totalQuestionCount * timeLimit) - totalTimeSpent);
         int timeBonus = Mathf.RoundToInt(totalRemainingTime * 100f);
 
@@ -1043,10 +1371,8 @@ public class TiltQuizManager : MonoBehaviour
 
         CalculateFinalScore();
 
-        // 💡 正答率・時間の計算
         float accuracy = ((float)correctCount / totalQuestionCount) * 100f;
 
-        // 💡 スコア詳細の表示＆アニメーション
         if (scoreFrameImage != null)
         {
             scoreFrameImage.SetActive(true);
@@ -1069,7 +1395,6 @@ public class TiltQuizManager : MonoBehaviour
             );
         }
 
-        // 💡 ランキングの更新と表示＆アニメーション
         UpdateAndSaveRanking(finalScore);
 
         if (rankingFrameImage != null)
@@ -1083,17 +1408,62 @@ public class TiltQuizManager : MonoBehaviour
             rankingText.gameObject.SetActive(true);
             DisplayRanking();
         }
+        // 正解数に応じた一言メッセージの切替
+        string resultHeader;
+        if (correctCount == 5)
+        {
+            resultHeader = GetText("おめでとう！", "Congratulations!");
+        }
+        else if (correctCount >= 3)
+        {
+            resultHeader = GetText("おしい！", "So Close!");
+        }
+        else if (correctCount >= 1)
+        {
+            resultHeader = GetText("がんばった！", "Good Job!");
+        }
+        else
+        {
+            resultHeader = GetText("ざんねん…", "Too Bad...");
+        }
 
-        // クリア専用テキストへ設定
         if (clearResultText != null)
         {
             clearResultText.gameObject.SetActive(true);
-            clearResultText.text = GetText(
-                $"おめでとう！\n5問中 <color=red>{correctCount}</color> 問正解でした！",
-                $"Congratulations!\nYou scored <color=red>{correctCount}</color> / {totalQuestionCount}!"
-            );
+
+            if (correctCount == 5)
+            {
+                // クーポン獲得（全問正解）時
+                bool isUsed = PlayerPrefs.GetInt(CouponUsedKey, 0) == 1;
+                if (!isUsed)
+                {
+                    // 初獲得時
+                    clearResultText.text = GetText(
+                        "全問正解！クーポンをゲットしたよ！",
+                        "Perfect score! You got a coupon!"
+                    );
+                }
+                else
+                {
+                    // すでに獲得（使用）済みの場合
+                    clearResultText.text = GetText(
+                        "全問正解！クーポン獲得済みです！",
+                        "Perfect score! Coupon already claimed!"
+                    );
+                }
+            }
+            else
+            {
+                // クーポン未獲得時
+                clearResultText.text = GetText(
+                    $"{resultHeader}\n5問中 <color=red>{correctCount}</color> 問正解でした！",
+                    $"{resultHeader}\nYou scored <color=red>{correctCount}</color> / {totalQuestionCount}!"
+                );
+            }
+
             if (clearResultTextPopAnim != null) clearResultTextPopAnim.PlayPop();
         }
+
 
         if (couponPanel != null)
         {
@@ -1101,16 +1471,39 @@ public class TiltQuizManager : MonoBehaviour
             if (couponImage != null) couponImage.SetActive(true);
 
             bool isUsed = PlayerPrefs.GetInt(CouponUsedKey, 0) == 1;
+            
             if (useCouponButton != null)
             {
-                useCouponButton.SetActive(!isUsed);
+                // ボタンは常に表示状態にする
+                useCouponButton.SetActive(true);
+
+                // Buttonコンポーネントを取得して有効/無効を切り替え
+                Button btn = useCouponButton.GetComponent<Button>();
+                if (btn != null)
+                {
+                    btn.interactable = !isUsed; // 使用済みの場合は押せない状態にする
+                }
+
+                // ボタンのテキストを切り替え
+                if (useCouponButtonText != null)
+                {
+                    useCouponButtonText.text = isUsed ? 
+                        GetText("クーポン使用済み", "Coupon Used") : 
+                        GetText("クーポンを使用する", "Use Coupon");
+                }
+
+                // 未使用の場合のみポップアニメーションを再生
                 if (!isUsed && couponButtonPopAnim != null) couponButtonPopAnim.PlayPop();
             }
+
+            // 使用済みバッジ（済スタンプ）の表示切替
             if (usedCouponBadge != null)
             {
                 usedCouponBadge.SetActive(isUsed);
             }
         }
+
+
 
         ShowEndButtons();
     }
@@ -1129,7 +1522,7 @@ public class TiltQuizManager : MonoBehaviour
         }
 
         scores.Add(newScore);
-        scores.Sort((a, b) => b.CompareTo(a)); // 降順ソート
+        scores.Sort((a, b) => b.CompareTo(a)); 
 
         for (int i = 0; i < 3; i++)
         {
@@ -1277,20 +1670,39 @@ public class TiltQuizManager : MonoBehaviour
         StartCoroutine(PlayButtonSEAndChangeScene(titleSceneName));
     }
 
-    public void OnClickUseCouponButton()
+       public void OnClickUseCouponButton()
     {
         if (seAudioSource != null && buttonSE != null)
         {
             seAudioSource.PlayOneShot(buttonSE);
         }
 
+        // クーポン使用状態フラグを保存
         PlayerPrefs.SetInt(CouponUsedKey, 1);
         PlayerPrefs.Save();
 
-        if (useCouponButton != null) useCouponButton.SetActive(false);
-        if (usedCouponBadge != null) usedCouponBadge.SetActive(true);
-    }
+        // ボタンを押せない状態（無効）にする
+        if (useCouponButton != null)
+        {
+            Button btn = useCouponButton.GetComponent<Button>();
+            if (btn != null)
+            {
+                btn.interactable = false;
+            }
+        }
 
+        // テキストを「クーポン使用済み」に変更する
+        if (useCouponButtonText != null)
+        {
+            useCouponButtonText.text = GetText("クーポン使用済み", "Coupon Used");
+        }
+
+        // 使用済みバッジ（済スタンプ）を表示する
+        if (usedCouponBadge != null)
+        {
+            usedCouponBadge.SetActive(true);
+        }
+    }
     private IEnumerator PlayButtonSEAndChangeScene(string sceneName)
     {
         FadeOutBGM();
